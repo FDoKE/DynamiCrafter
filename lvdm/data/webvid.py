@@ -37,8 +37,8 @@ class WebVid(Dataset):
                  fixed_fps=None,
                  random_fs=False,
                  ):
-        self.meta_path = meta_path
-        self.data_dir = data_dir
+        self.meta_path = os.path.abspath(meta_path)
+        self.data_dir = os.path.abspath(data_dir)
         self.subsample = subsample
         self.video_length = video_length
         self.resolution = [resolution, resolution] if isinstance(resolution, int) else resolution

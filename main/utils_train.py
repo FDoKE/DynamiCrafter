@@ -81,7 +81,6 @@ def get_trainer_callbacks(lightning_config, config, logdir, ckptdir, logger):
                                                         "filename": "{epoch}-{step}",
                                                         "verbose": True,
                                                         'save_top_k': -1,
-                                                        'every_n_train_steps': 10000,
                                                         'save_weights_only': True
                                                     }
                                                 }
@@ -144,16 +143,16 @@ def load_checkpoints(model, model_cfg):
         pl_sd = torch.load(pretrained_ckpt, map_location="cpu")
         try:
             if 'state_dict' in pl_sd.keys():
-                model.load_state_dict(pl_sd["state_dict"], strict=True)
+                model.load_state_dict(pl_sd["state_dict"], strict=False)
                 mainlogger.info(">>> Loaded weights from pretrained checkpoint: %s"%pretrained_ckpt)
             else:
                 # deepspeed
                 new_pl_sd = OrderedDict()
                 for key in pl_sd['module'].keys():
                     new_pl_sd[key[16:]]=pl_sd['module'][key]
-                model.load_state_dict(new_pl_sd, strict=True)
+                model.load_state_dict(new_pl_sd, strict=False)
         except:
-            model.load_state_dict(pl_sd)
+            model.load_state_dict(pl_sd, strict=False)
     else:
         mainlogger.info(">>> Start training from scratch")
 

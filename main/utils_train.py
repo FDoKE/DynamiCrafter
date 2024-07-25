@@ -5,6 +5,7 @@ mainlogger = logging.getLogger('mainlogger')
 
 import torch
 from collections import OrderedDict
+from safetensors.torch import load_file
 
 def init_workspace(name, logdir, model_config, lightning_config, rank=0):
     workdir = os.path.join(logdir, name)
@@ -135,26 +136,39 @@ def get_trainer_strategy(lightning_config):
     return strategy_cfg
 
 def load_checkpoints(model, model_cfg):
-    if check_config_attribute(model_cfg, "pretrained_checkpoint"):
-        pretrained_ckpt = model_cfg.pretrained_checkpoint
-        assert os.path.exists(pretrained_ckpt), "Error: Pre-trained checkpoint NOT found at:%s"%pretrained_ckpt
-        mainlogger.info(">>> Load weights from pretrained checkpoint")
-
-        pl_sd = torch.load(pretrained_ckpt, map_location="cpu")
-        try:
-            if 'state_dict' in pl_sd.keys():
-                model.load_state_dict(pl_sd["state_dict"], strict=False)
-                mainlogger.info(">>> Loaded weights from pretrained checkpoint: %s"%pretrained_ckpt)
-            else:
-                # deepspeed
-                new_pl_sd = OrderedDict()
-                for key in pl_sd['module'].keys():
-                    new_pl_sd[key[16:]]=pl_sd['module'][key]
-                model.load_state_dict(new_pl_sd, strict=False)
-        except:
-            model.load_state_dict(pl_sd, strict=False)
+    pretrained_ckpt = model_cfg.pretrained_checkpoint
+    print(f"start loading checkpoint: {pretrained_ckpt}")
+    if "safetensors" in pretrained_ckpt:
+        pl_sd = load_file(pretrained_ckpt)
     else:
-        mainlogger.info(">>> Start training from scratch")
+        pl_sd = torch.load(pretrained_ckpt, map_location="cpu")
+
+    while 'state_dict' in pl_sd.keys():
+        pl_sd = pl_sd['state_dict']
+
+    model.load_state_dict(pl_sd, strict=False)
+    print(f"checkpoint loaded")
+
+    lora_path = model_cfg.lora_path
+    print(f"start loading lora: {lora_path}")
+    try:
+        if "safetensors" in lora_path:
+            lora_sd = load_file(lora_path)
+        else:
+            lora_sd = torch.load(lora_path, map_location="cpu")
+
+        while 'state_dict' in lora_sd.keys():
+            lora_sd = lora_sd['state_dict']
+
+        state_dict_lora = OrderedDict()
+        for layer_name in lora_sd.keys():
+            if "lora_" in layer_name:
+                state_dict_lora[layer_name] = lora_sd[layer_name]
+
+        model.load_state_dict(state_dict_lora, strict=False)
+        print(f"Lora loaded")
+    except:
+        print(f"Could not load lora {lora_path}, no lora?")
 
     return model
 

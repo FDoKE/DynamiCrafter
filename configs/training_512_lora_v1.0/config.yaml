@@ -1,5 +1,6 @@
 model:
   pretrained_checkpoint: checkpoints/dynamicrafter_512_v1/model.ckpt
+  lora_path: none # path/to/trained_lora.ckpt
   base_learning_rate: 1.0e-05
   scale_lr: False
   target: lvdm.models.ddpm3d.LatentVisualDiffusion
@@ -135,17 +136,19 @@ lightning:
   compile: True
 
   lora:
-    skip_layers: ['time_embed', 'fps_embedding']
+    skip_layers: [] # my result were better without exclude
     enabled: True
-    rank: 32
+    rank: 64
     alpha: 0.5
+    dropout: 0.1
+    save_only_lora: True
 
   trainer:
     benchmark: True
-    accumulate_grad_batches: 8 # CONFIGURE
+    accumulate_grad_batches: 16 # CONFIGURE
     max_steps: 100000
     # logger
-    log_every_n_steps: 32 # CONFIGURE
+    log_every_n_steps: 5 # CONFIGURE
     # val
     val_check_interval: 0.5
     gradient_clip_algorithm: 'norm'

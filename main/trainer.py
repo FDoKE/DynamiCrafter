@@ -1,6 +1,11 @@
 import argparse, os, sys, datetime
+from collections import OrderedDict
+from typing import Dict, Any, Optional
 
 import pytorch_lightning
+from lightning_fabric.plugins import TorchCheckpointIO
+from lightning_fabric.utilities.cloud_io import get_filesystem, _atomic_save
+from lightning_fabric.utilities.types import _PATH
 from omegaconf import OmegaConf
 from torchtune.modules.peft import LoRALinear
 from transformers import logging as transf_logging
@@ -8,10 +13,35 @@ import pytorch_lightning as pl
 from pytorch_lightning import seed_everything
 from pytorch_lightning.trainer import Trainer
 import torch
+from typing_extensions import override
+
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
 from utils.utils import instantiate_from_config
 from utils_train import get_trainer_callbacks, get_trainer_logger, get_trainer_strategy
 from utils_train import set_logger, init_workspace, load_checkpoints
+
+class LoraCheckpointIo(TorchCheckpointIO):
+
+    @override
+    def save_checkpoint(self, checkpoint: Dict[str, Any], path: _PATH, storage_options: Optional[Any] = None) -> None:
+        if storage_options is not None:
+            raise TypeError(
+                "`Trainer.save_checkpoint(..., storage_options=...)` with `storage_options` arg"
+                f" is not supported for `{self.__class__.__name__}`. Please implement your custom `CheckpointIO`"
+                " to define how you'd like to use `storage_options`."
+            )
+        fs = get_filesystem(path)
+        fs.makedirs(os.path.dirname(path), exist_ok=True)
+
+        while 'state_dict' in checkpoint.keys():
+            checkpoint = checkpoint['state_dict']
+
+        state_dict_lora = OrderedDict()
+        for layer_name in checkpoint.keys():
+            if "lora_" in layer_name:
+                state_dict_lora[layer_name] = checkpoint[layer_name]
+        _atomic_save(state_dict_lora, path)
+
 
 
 def get_parser(**parser_kwargs):
@@ -41,9 +71,8 @@ def get_nondefault_trainer_args(args):
     default_trainer_args = parser.parse_args([])
     return sorted(k for k in vars(default_trainer_args) if getattr(args, k) != getattr(default_trainer_args, k))
 
-def replace_linear_with_lora(module, rank, alpha, skip_layers, prefix=""):
+def replace_linear_with_lora(module, rank, alpha, dropout, skip_layers, prefix=""):
     alphakoeff = rank * alpha
-    dropout = 0.0
     for name, child in module.named_children():
         fullname = f"{prefix}.{name}" if prefix else name
 
@@ -66,13 +95,13 @@ def replace_linear_with_lora(module, rank, alpha, skip_layers, prefix=""):
                 newLinear.bias.data = child.bias.data.clone()
             module.__setattr__(name, newLinear)
         else:
-            replace_linear_with_lora(child, rank, alpha, skip_layers, fullname)
+            replace_linear_with_lora(child, rank, alpha, dropout, skip_layers, fullname)
 
-def configure_lora(model, rank, alpha, skip_layers):
-    print("LoRA configuration started. Rank: ", rank, ", alpha: ", alpha)
+def configure_lora(model, rank, alpha, dropout, skip_layers):
+    print("LoRA configuration started. Rank: ", rank, ", alpha: ", alpha, ", dropout: ", dropout)
 
     for key, layer in model.named_modules():
-        replace_linear_with_lora(layer, rank, alpha, skip_layers)
+        replace_linear_with_lora(layer, rank, alpha, dropout, skip_layers)
 
     for name, param in model.named_parameters():
         if ".lora" in name:
@@ -118,7 +147,8 @@ if __name__ == "__main__":
     if lora_config['enabled'] == True:
         rank = lora_config['rank']
         alpha = lora_config['alpha']
-        configure_lora(model, rank, alpha, lora_config['skip_layers'])
+        dropout = lora_config['dropout']
+        configure_lora(model, rank, alpha, dropout, lora_config['skip_layers'])
 
     ## load checkpoints
     model = load_checkpoints(model, config.model)
@@ -196,6 +226,8 @@ if __name__ == "__main__":
                       logger=train_logger,
                       callbacks=callbacks)
 
+    if lora_config['save_only_lora'] == True:
+        trainer.strategy.checkpoint_io = LoraCheckpointIo()
 
     ## allow checkpointing via USR1
     def melk(*args, **kwargs):

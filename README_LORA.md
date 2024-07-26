@@ -68,7 +68,7 @@ Most of the parameters are known. Feel free to google them.
 
 # Extracting and applying lora
 
-## Extract lora:
+## Extract lora (not needed if you have save_only_lora flag in config):
 `python extract_lora.py --model=trained/training_512_lora_v1.0/checkpoints/epoch=0-step=20.ckpt `
 
 it will produce lora weights in .safetensors format
